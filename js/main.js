@@ -590,4 +590,13 @@ flatButton.addEventListener('click', () => {
   overlay.hidden = true;
 });
 
+// For capture tooling (store shots, the link preview): where each live target is on screen.
+window.fireballRange = {
+  get state() { return game.state; },
+  targetsOnScreen: () => targets.filter(t => !t.dying && t.age > 0.3).map(t => {
+    const p = t.group.position.clone().project(camera);
+    return { x: (p.x + 1) / 2 * innerWidth, y: (1 - p.y) / 2 * innerHeight, distance: t.group.position.distanceTo(head), gold: t.gold };
+  }),
+};
+
 boot().catch(e => { status.textContent = 'Failed to load: ' + e.message; console.error(e); });
