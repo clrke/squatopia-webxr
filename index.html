@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Squatopia: Fireball Range</title>
+  <meta name="description" content="A WebXR demo of Squatopia: punch fireballs at target rings in the Alpine biome.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@600;700&family=Nunito:wght@700&display=swap" rel="stylesheet">
+  <style>
+    html, body { margin: 0; height: 100%; background: #ccdeed; overflow: hidden; font-family: Nunito, sans-serif; }
+    #app canvas { display: block; }
+    #overlay {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px;
+      background: linear-gradient(180deg, rgba(10, 20, 35, 0.55), rgba(10, 20, 35, 0.8));
+    }
+    #overlay[hidden] { display: none; }
+    .card {
+      max-width: 520px; width: 100%; box-sizing: border-box; padding: 32px 28px; text-align: center; color: #fff;
+      background: rgba(0, 0, 0, 0.9); border: 3px solid #0099ff; border-radius: 28px;
+    }
+    .kicker { font-family: Fredoka, sans-serif; color: #8fd3ff; letter-spacing: 0.12em; font-size: 16px; margin: 0; }
+    h1 { font-family: Fredoka, sans-serif; font-weight: 700; font-size: clamp(34px, 8vw, 52px); margin: 6px 0 12px; }
+    p { color: #d9e6f2; margin: 0 0 22px; line-height: 1.45; }
+    button {
+      font-family: Fredoka, sans-serif; font-weight: 600; font-size: 22px; color: #fff; background: #2196f2;
+      border: 0; border-radius: 999px; padding: 14px 34px; margin: 6px; cursor: pointer;
+    }
+    button:hover { background: #4fb0ff; }
+    button.secondary { background: #26384f; }
+    button[hidden] { display: none; }
+    #status { color: #9fb3c8; font-size: 14px; min-height: 20px; margin: 14px 0 0; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="overlay">
+    <div class="card">
+      <p class="kicker">SQUATOPIA</p>
+      <h1>Fireball Range</h1>
+      <p>Stand on an alpine ledge and punch fireballs at the targets. Your fist throws the fire, as fast as you punch. 60 seconds, best score wins. Look at a button and hold to select.</p>
+      <button id="enter-vr" hidden>Enter VR</button>
+      <button id="play-flat" class="secondary" hidden>Play in browser</button>
+      <div id="status">Loading…</div>
+    </div>
+  </div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
