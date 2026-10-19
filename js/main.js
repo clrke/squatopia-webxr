@@ -199,6 +199,7 @@ function shoot(from, velocity) {
 
 function updateShots(dt) {
   for (let i = shots.length - 1; i >= 0; i--) {
+    if (i >= shots.length) continue;   // a hit's side effects may have removed shots
     const s = shots[i];
     const before = s.pos.clone();
     s.pos.addScaledVector(s.vel, dt);
@@ -360,7 +361,6 @@ function miss() {
 
 function startCountdown() {
   for (let i = targets.length - 1; i >= 0; i--) removeTarget(i);
-  shots.length = 0;
   Object.assign(game, { state: 'countdown', score: 0, streak: 0, bestStreak: 0, hits: 0, shots: 0, elapsed: 0, countdown: 3, spawnIn: 0.4, lastBeep: 4 });
   menu.visible = false;
   results.visible = false;
@@ -531,23 +531,29 @@ function onXRSelect(e) {
 // ------------------------------------------------------------------ loop
 
 const clock = new THREE.Clock();
+let loopErrors = 0;
 let time = 0;
 
 renderer.setAnimationLoop(() => {
-  const dt = Math.min(clock.getDelta(), 0.05);
-  time += dt;
-  if (!renderer.xr.isPresenting) {
-    camera.position.set(0, 1.6, 0);
-    camera.rotation.set(pitch, yaw, 0, 'YXZ');
+  // One bad frame must never freeze the headset: log it and keep rendering.
+  try {
+    const dt = Math.min(clock.getDelta(), 0.05);
+    time += dt;
+    if (!renderer.xr.isPresenting) {
+      camera.position.set(0, 1.6, 0);
+      camera.rotation.set(pitch, yaw, 0, 'YXZ');
+    }
+    updateHands(dt, time);
+    updateGame(dt);
+    updateTargets(dt);
+    updateShots(dt);
+    world?.update(dt, time);
+    for (let i = popups.length - 1; i >= 0; i--) if (!popups[i].update(dt, head)) popups.splice(i, 1);
+    selector.update(dt, hoverRays());
+    fx.update(dt);
+  } catch (e) {
+    if (!loopErrors++) console.error(e);
   }
-  updateHands(dt, time);
-  updateGame(dt);
-  updateTargets(dt);
-  updateShots(dt);
-  world?.update(dt, time);
-  for (let i = popups.length - 1; i >= 0; i--) if (!popups[i].update(dt, head)) popups.splice(i, 1);
-  selector.update(dt, hoverRays());
-  fx.update(dt);
   renderer.render(scene, camera);
 });
 
