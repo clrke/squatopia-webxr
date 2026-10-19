@@ -20,10 +20,9 @@
   <meta name="twitter:description" content="Punch fire at targets on an alpine ledge. A 60-second hands-only WebXR mini-game from Squatopia, made for Meta Quest Browser.">
   <meta name="twitter:image" content="https://clrke.github.io/squatopia-webxr/preview.jpg">
   <meta name="theme-color" content="#0b1422">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@600;700&family=Nunito:wght@700&display=swap" rel="stylesheet">
   <style>
+    @font-face { font-family: Fredoka; src: url(fonts/Fredoka-SemiBold.ttf) format('truetype'); font-weight: 600 700; font-display: swap; }
+    @font-face { font-family: Nunito; src: url(fonts/Nunito-Bold.ttf) format('truetype'); font-weight: 700; font-display: swap; }
     html, body { margin: 0; height: 100%; background: #ccdeed; overflow: hidden; font-family: Nunito, sans-serif; }
     #app canvas { display: block; }
     #overlay {
@@ -56,6 +55,7 @@
       <p class="kicker">SQUATOPIA</p>
       <h1>Fireball Range</h1>
       <p>Stand on an alpine ledge and punch fireballs at the targets. Your fist throws the fire, as fast as you punch. 60 seconds, best score wins. Look at a button and pinch to select.</p>
+      <p id="best" hidden></p>
       <button id="enter-vr" hidden>Enter VR</button>
       <button id="play-flat" class="secondary" hidden>Play in browser</button>
       <div id="status">Loading…</div>
@@ -72,8 +72,8 @@
       document.getElementById('version').textContent = 'v' + version;
       const base = new URL('js/', location.href).href;
       const imports = {
-        three: 'https://unpkg.com/three@0.160.0/build/three.module.js',
-        'three/addons/': 'https://unpkg.com/three@0.160.0/examples/jsm/',
+        three: new URL('vendor/three/build/three.module.js', location.href).href,
+        'three/addons/': new URL('vendor/three/examples/jsm/', location.href).href,
       };
       for (const f of ['main', 'world', 'fx', 'audio', 'ui']) imports[`${base}${f}.js`] = `${base}${f}.js?v=${version}`;
       const map = document.createElement('script');

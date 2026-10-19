@@ -59,7 +59,7 @@ const popups = [];
 
 // ------------------------------------------------------------------ hands
 
-const handFactory = new XRHandModelFactory();
+const handFactory = new XRHandModelFactory().setPath('vendor/hands/');
 const controllerFactory = new XRControllerModelFactory();
 const hands = [0, 1].map(i => {
   const controller = renderer.xr.getController(i);
@@ -468,8 +468,8 @@ function placePanel(panel, y, z) {
 const menu = new Panel(1.6, 1.1, (ctx, w) => {
   text(ctx, 'SQUATOPIA', w / 2, 70, 44, { color: '#8FD3FF' });
   text(ctx, 'Fireball Range', w / 2, 140, 82);
-  text(ctx, 'Punch to throw fire. Hit the bullseye.', w / 2, 225, 34, { font: 'Nunito', weight: 700, color: '#d9e6f2' });
-  text(ctx, game.best ? `Best: ${game.best}` : '60 seconds', w / 2, 278, 30, { font: 'Nunito', weight: 700, color: '#9fb3c8' });
+  text(ctx, 'Reach to throw fire', w / 2, 225, 38, { font: 'Nunito', weight: 700, color: '#d9e6f2' });
+  text(ctx, game.best ? `Best score: ${game.best}` : '60 seconds', w / 2, 274, 34, { font: 'Nunito', weight: 700, color: '#9fb3c8' });
   text(ctx, `v${VERSION}`, w - 40, 410, 24, { font: 'Nunito', weight: 700, color: '#6f849a', align: 'right' });
 });
 menu.addButton(new Button('Start', 0.62, 0.2, startCountdown), 0, -0.3);
@@ -481,7 +481,7 @@ const results = new Panel(1.6, 1.15, (ctx, w) => {
   text(ctx, String(game.score), w / 2, 160, 110);
   const accuracy = game.shots ? Math.round(100 * game.hits / game.shots) : 0;
   text(ctx, `${game.hits} hits  ·  ${accuracy}% accuracy  ·  best streak ${game.bestStreak}`, w / 2, 245, 30, { font: 'Nunito', weight: 700, color: '#d9e6f2' });
-  text(ctx, `Best: ${game.best}`, w / 2, 295, 30, { font: 'Nunito', weight: 700, color: '#9fb3c8' });
+  text(ctx, `Best score: ${game.best}`, w / 2, 295, 34, { font: 'Nunito', weight: 700, color: '#9fb3c8' });
 });
 results.addButton(new Button('Play again', 0.7, 0.2, startCountdown), 0, -0.34);
 placePanel(results, 1.45, -2.2);
@@ -604,6 +604,12 @@ const status = document.getElementById('status');
 const vrButton = document.getElementById('enter-vr');
 const flatButton = document.getElementById('play-flat');
 
+function showBest() {
+  const el = document.getElementById('best');
+  el.hidden = !game.best;
+  el.textContent = `Best score: ${game.best}`;
+}
+
 async function boot() {
   await Promise.all([document.fonts.load('600 64px Fredoka'), document.fonts.load('700 32px Nunito')]).catch(() => {});
   menu.refresh();
@@ -614,7 +620,8 @@ async function boot() {
   const vr = navigator.xr && await navigator.xr.isSessionSupported('immersive-vr').catch(() => false);
   vrButton.hidden = !vr;
   flatButton.hidden = false;
-  if (!vr) status.textContent = 'No VR headset found: play with the mouse (click to throw, drag to look).';
+  if (!vr) status.textContent = 'Open this page in Meta Quest Browser to play in VR, or play here with the mouse (click to throw, drag to look).';
+  showBest();
 }
 
 function wake() {
@@ -628,7 +635,7 @@ vrButton.addEventListener('click', async () => {
   await renderer.xr.setSession(session);
   session.addEventListener('select', onXRSelect);
   overlay.hidden = true;
-  session.addEventListener('end', () => { overlay.hidden = false; });
+  session.addEventListener('end', () => { overlay.hidden = false; showBest(); });
 });
 
 flatButton.addEventListener('click', () => {
@@ -636,9 +643,10 @@ flatButton.addEventListener('click', () => {
   overlay.hidden = true;
 });
 
-// For capture tooling (store shots, the link preview): where each live target is on screen.
+// For capture tooling (store shots, the link preview) and remote checks over devtools: never shown.
 window.fireballRange = {
   get state() { return game.state; },
+  game, hands, targets, startCountdown, endRound, renderer,
   targetsOnScreen: () => targets.filter(t => !t.dying && t.age > 0.3).map(t => {
     const p = t.group.position.clone().project(camera);
     return { x: (p.x + 1) / 2 * innerWidth, y: (1 - p.y) / 2 * innerHeight, distance: t.group.position.distanceTo(head), gold: t.gold };
