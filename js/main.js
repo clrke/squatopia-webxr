@@ -21,6 +21,8 @@ const RELEASE_SLOWDOWN = 0.6;  // let go once the fist's forward speed drops und
 const RELEASE_EXTENSION = 0.55, RELEASE_AFTER = 0.18;   // or 55 cm ahead of the eyes, or 0.18 s into the stroke
 const STROKE_WINDOW = 0.3;     // the stroke's start is the rearmost fist position in this many seconds
 const VELOCITY_WINDOW = 0.05;
+const AIM_WINDOW = 0.12;       // the shot follows the fist's path over the punch's last 0.12 s (v0.3.2 data: the best of 9 estimators)
+const ASSIST = 4;              // degrees past a target's edge within which a shot bends just onto its outer ring
 
 // ------------------------------------------------------------------ renderer and scene
 
@@ -148,17 +150,58 @@ function velocityOf(s, now) {
  */
 function reach(s, velocity) {
   music.reach();
-  let start = s.history[0];
-  for (const h of s.history) if (h.ahead < start.ahead) start = h;
+  // The stroke starts at the fist's rearmost point; the aim uses its last AIM_WINDOW seconds (less of the wind-up's arc).
+  let rear = 0;
+  for (let i = 1; i < s.history.length; i++) if (s.history[i].ahead < s.history[rear].ahead) rear = i;
+  const end = s.history[s.history.length - 1];
+  let k = s.history.length - 1;
+  while (k > rear && end.t - s.history[k].t < AIM_WINDOW) k--;
+  const start = s.history[k];
   const path = s.fist.clone().sub(start.p);
-  const direction = path.length() > 0.08 ? path.normalize() : velocity.clone().normalize();
+  const direction = path.length() > 0.05 ? path.normalize() : velocity.clone().normalize();
   const speed = THREE.MathUtils.clamp(s.stroke.speed * SHOT_SCALE, SHOT_MIN, SHOT_MAX);
-  logReach(s, start, direction, velocity, speed);
+  const assisted = game.state === 'play' && assist(s.fist, direction, speed);
+  logReach(s, start, direction, velocity, speed, assisted);
   shoot(s.fist, direction.multiplyScalar(speed));
 }
 
+/**
+ * Aim assist: a shot that would pass within ASSIST degrees outside a target's edge (where the target will be when the
+ * shot arrives) bends just inside the edge, onto the outer ring. Shots already on a target are never bent, so the inner
+ * rings and the bullseye still take a true punch. Turns `direction` in place; true when it bent.
+ */
+function assist(from, direction, speed) {
+  let best = null;
+  for (const t of targets) {
+    if (t.dying || t.age < 0.1) continue;
+    const guess = targetAt(t, t.age + t.group.position.distanceTo(from) / speed);
+    const to = guess.sub(from);
+    const distance = to.length();
+    const edge = Math.atan(t.radius / distance);
+    const off = direction.angleTo(to);
+    if (off <= edge) return false;
+    const excess = off - edge;
+    if (excess <= THREE.MathUtils.degToRad(ASSIST) && (!best || excess < best.excess)) best = { to: to.normalize(), off, edge, excess };
+  }
+  if (!best) return false;
+  // Rotate toward the target's centre until the shot sits at 85% of its radius.
+  const turn = best.off - Math.atan(Math.tan(best.edge) * 0.85);
+  const axis = new THREE.Vector3().crossVectors(direction, best.to).normalize();
+  direction.applyAxisAngle(axis, turn);
+  return true;
+}
+
+/** Where a target's centre is at a given age (its sway or bob). */
+function targetAt(t, age) {
+  const w = age * 1.6 + t.phase;
+  const p = t.home.clone();
+  if (t.motion === 'sway') p.x += Math.sin(w) * t.amp;
+  if (t.motion === 'bob') p.y += Math.sin(w) * t.amp * 0.5;
+  return p;
+}
+
 /** Records each Reach (window.reachLog, console) with its error against the target it came closest to, for tuning. */
-function logReach(s, start, direction, velocity, speed) {
+function logReach(s, start, direction, velocity, speed, assisted) {
   let best = null;
   for (const t of targets) {
     if (t.dying) continue;
@@ -172,7 +215,7 @@ function logReach(s, start, direction, velocity, speed) {
   }
   const round = v => Math.round(v * 100) / 100;
   const entry = {
-    hand: s.source?.handedness, input: s.source?.hand ? 'hand' : 'controller', speed: round(speed), samples: s.history.length,
+    assisted, hand: s.source?.handedness, input: s.source?.hand ? 'hand' : 'controller', speed: round(speed), samples: s.history.length,
     path: round(s.fist.distanceTo(start.p)), velocityVsPath: round(THREE.MathUtils.radToDeg(velocity.angleTo(direction))),
     target: best && { error: round(best.error), right: round(best.side), up: round(best.up), allowed: round(best.allowed) },
     raw: {
@@ -291,10 +334,7 @@ function updateTargets(dt) {
       if (t.dying > 0.25) { removeTarget(i); }
       continue;
     }
-    const w = t.age * 1.6 + t.phase;
-    g.position.copy(t.home);
-    if (t.motion === 'sway') g.position.x += Math.sin(w) * t.amp;
-    if (t.motion === 'bob') g.position.y += Math.sin(w) * t.amp * 0.5;
+    g.position.copy(targetAt(t, t.age));
     g.lookAt(head);
     t.normal.set(0, 0, 1).applyQuaternion(g.quaternion);
     const pop = Math.min(1, t.age / 0.25);
