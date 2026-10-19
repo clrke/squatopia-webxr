@@ -4,11 +4,11 @@ import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFa
 import { buildWorld, height } from './world.js';
 import { FireFx } from './fx.js';
 import { Sound, Music } from './audio.js';
-import { Panel, Button, Gaze, Popup, text } from './ui.js';
+import { Panel, Button, Selector, Popup, text } from './ui.js';
 
 // Squatopia: Fireball Range. Stand on an alpine ledge and punch fireballs at target rings for 60 seconds.
 // A Reach (a forward jab, the game's CrawlDetector rule) throws a fireball along the hand's own velocity, as fast as the
-// hand moved; the head never aims. Menus answer head gaze with a dwell. No locomotion.
+// hand moved; the head never aims. Menus use look and pinch. No locomotion.
 
 const ROUND = 60;
 const HURRY = 10;
@@ -16,6 +16,10 @@ const SHOT_SCALE = 7;          // fireball speed = hand speed x this
 const SHOT_MIN = 9, SHOT_MAX = 30;
 const SHOT_LIFE = 3;
 const REACH_ARM = 0.2, REACH_FIRE = 0.3, REACH_SPEED = 0.7;   // CrawlDetector: from < 20 cm to > 30 cm ahead at >= 0.7 m/s
+const RELEASE_SLOWDOWN = 0.6;  // let go once the fist's forward speed drops under 60% of the stroke's peak
+const RELEASE_EXTENSION = 0.55, RELEASE_AFTER = 0.18;   // or 55 cm ahead of the eyes, or 0.18 s into the stroke
+const STROKE_WINDOW = 0.3;     // the stroke's start is the rearmost fist position in this many seconds
+const VELOCITY_WINDOW = 0.05;
 
 // ------------------------------------------------------------------ renderer and scene
 
@@ -47,7 +51,7 @@ const tex = name => texLoader.load(`assets/tex/${name}.png`);
 const fx = new FireFx(scene, { fire: tex('fire'), hotglow: tex('hotglow'), bullet: tex('bullet') });
 
 let world = null;
-const gaze = new Gaze(scene, sound);
+const selector = new Selector(scene, sound);
 const popups = [];
 
 // ------------------------------------------------------------------ hands
@@ -64,8 +68,6 @@ const hands = [0, 1].map(i => {
   const state = { controller, grip, hand, source: null, history: [], armed: false, fist: new THREE.Vector3(), tracked: false };
   controller.addEventListener('connected', e => { state.source = e.data; state.history.length = 0; });
   controller.addEventListener('disconnected', () => { state.source = null; state.tracked = false; });
-  // A pinch or trigger only ever selects in menus.
-  controller.addEventListener('select', () => gaze.select());
   return state;
 });
 
@@ -100,31 +102,58 @@ function updateHands(dt, now) {
   flat.normalize();
   for (const s of hands) {
     s.tracked = fistOf(s);
-    if (!s.tracked) { s.history.length = 0; continue; }
-    s.history.push({ t: now, p: s.fist.clone() });
-    while (s.history.length > 2 && now - s.history[0].t > 0.08) s.history.shift();
-    if (game.state === 'play') fx.handFlame(s.fist, dt);
-    if (s.history.length < 2) continue;
-    const first = s.history[0], last = s.history[s.history.length - 1];
-    const span = last.t - first.t;
-    if (span < 0.02) continue;
-    const velocity = tmp.copy(last.p).sub(first.p).divideScalar(span);
-    // The Reach: the fist goes from under 20 cm to over 30 cm ahead of the eyes, moving forward at 0.7 m/s or more.
+    if (!s.tracked) { s.history.length = 0; s.stroke = null; continue; }
     const ahead = s.fist.clone().sub(head).dot(flat);
-    if (ahead < REACH_ARM) s.armed = true;
-    if (s.armed && ahead > REACH_FIRE && velocity.dot(flat) >= REACH_SPEED) {
+    // Hand tracking repeats a pose for a frame or two between camera updates: keep only new samples.
+    const prev = s.history[s.history.length - 1];
+    if (!prev || prev.p.distanceToSquared(s.fist) > 1e-8) s.history.push({ t: now, p: s.fist.clone(), ahead });
+    while (s.history.length > 2 && now - s.history[0].t > STROKE_WINDOW) s.history.shift();
+    if (game.state === 'play') fx.handFlame(s.fist, dt);
+    const velocity = velocityOf(s, now);
+    if (!velocity) continue;
+    const forward = velocity.dot(flat);
+    // The Reach: the fist goes from under 20 cm to over 30 cm ahead of the eyes, moving forward at 0.7 m/s or more...
+    if (ahead < REACH_ARM) { s.armed = true; s.stroke = null; }
+    if (s.armed && !s.stroke && ahead > REACH_FIRE && forward >= REACH_SPEED)
+      s.stroke = { t: now, peak: forward, speed: velocity.length() };
+    if (!s.stroke) continue;
+    s.stroke.peak = Math.max(s.stroke.peak, forward);
+    s.stroke.speed = Math.max(s.stroke.speed, velocity.length());
+    // ...and lets go at full extension: once the fist slows, the arm is out, or the stroke has run long enough.
+    if (forward < s.stroke.peak * RELEASE_SLOWDOWN || ahead > RELEASE_EXTENSION || now - s.stroke.t > RELEASE_AFTER) {
+      reach(s, velocity);
       s.armed = false;
-      reach(s.fist, velocity);
+      s.stroke = null;
     }
   }
 }
 
-/** A Reach: the fireball leaves the fist along the hand's velocity, its speed scaled from the hand's. */
-function reach(from, handVelocity) {
+/** The fist's velocity over the last VELOCITY_WINDOW seconds of samples, or null without two samples. */
+function velocityOf(s, now) {
+  const h = s.history;
+  if (h.length < 2) return null;
+  const last = h[h.length - 1];
+  let first = h[0];
+  for (let i = h.length - 2; i >= 0; i--) { first = h[i]; if (last.t - h[i].t >= VELOCITY_WINDOW) break; }
+  const span = last.t - first.t;
+  if (span < 0.01) return null;
+  return tmp.copy(last.p).sub(first.p).divideScalar(span);
+}
+
+/**
+ * A Reach: the fireball leaves the fist along the punch's own path, from where the stroke began (the fist's rearmost point
+ * in the last STROKE_WINDOW) to where it let go, which averages out the arm's arc and tracking noise; its speed is scaled
+ * from the punch's top speed. The head never aims.
+ */
+function reach(s, velocity) {
   music.reach();
   if (game.state !== 'play') return;
-  const speed = THREE.MathUtils.clamp(handVelocity.length() * SHOT_SCALE, SHOT_MIN, SHOT_MAX);
-  shoot(from, handVelocity.clone().normalize().multiplyScalar(speed));
+  let start = s.history[0];
+  for (const h of s.history) if (h.ahead < start.ahead) start = h;
+  const path = s.fist.clone().sub(start.p);
+  const direction = path.length() > 0.08 ? path.normalize() : velocity.clone().normalize();
+  const speed = THREE.MathUtils.clamp(s.stroke.speed * SHOT_SCALE, SHOT_MIN, SHOT_MAX);
+  shoot(s.fist, direction.multiplyScalar(speed));
 }
 
 // ------------------------------------------------------------------ projectiles
@@ -366,7 +395,7 @@ const menu = new Panel(1.6, 1.1, (ctx, w) => {
 });
 menu.addButton(new Button('Start', 0.62, 0.2, startCountdown), 0, -0.3);
 placePanel(menu, 1.45, -2.2);
-gaze.panels.push(menu);
+selector.panels.push(menu);
 
 const results = new Panel(1.6, 1.15, (ctx, w) => {
   text(ctx, game.newBest ? 'New best!' : 'Time!', w / 2, 70, 56, { color: game.newBest ? '#FFD54F' : '#ffffff' });
@@ -378,7 +407,7 @@ const results = new Panel(1.6, 1.15, (ctx, w) => {
 results.addButton(new Button('Play again', 0.7, 0.2, startCountdown), 0, -0.34);
 placePanel(results, 1.45, -2.2);
 results.visible = false;
-gaze.panels.push(results);
+selector.panels.push(results);
 
 const hud = new Panel(3.4, 0.6, (ctx, w, h) => {
   if (game.state === 'countdown') {
@@ -418,13 +447,47 @@ canvas.addEventListener('pointerup', () => {
   const moved = drag?.moved;
   drag = null;
   if (moved || renderer.xr.isPresenting) return;
-  if (gaze.select()) return;
   mouseRay.setFromCamera(mouse, camera);
+  if (selector.select(mouseRay.ray.origin, mouseRay.ray.direction)) return;
   const from = camera.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0.25, -0.35, 0).applyQuaternion(camera.quaternion));
   const aim = mouseRay.ray.at(12, new THREE.Vector3());
   music.reach();
   if (game.state === 'play') shoot(from, aim.sub(from).normalize().multiplyScalar(18));
 });
+
+// ------------------------------------------------------------------ menu selection
+
+const rays = [0, 1].map(() => ({ origin: new THREE.Vector3(), direction: new THREE.Vector3(), laser: true }));
+const headRay = { origin: head, direction: headFwd, laser: false };
+const mouseHover = { origin: new THREE.Vector3(), direction: new THREE.Vector3(), laser: false };
+
+/** The rays that hover buttons this frame: each hand's pointing ray in VR (the head's when no hand points), the mouse on a screen. */
+function hoverRays() {
+  if (!renderer.xr.isPresenting) {
+    mouseRay.setFromCamera(mouse, camera);
+    mouseHover.origin.copy(mouseRay.ray.origin);
+    mouseHover.direction.copy(mouseRay.ray.direction);
+    return [mouseHover];
+  }
+  const list = [];
+  hands.forEach((s, i) => {
+    if (s.source?.targetRayMode !== 'tracked-pointer' || !s.controller.visible) return;
+    s.controller.getWorldPosition(rays[i].origin);
+    rays[i].direction.set(0, 0, -1).transformDirection(s.controller.matrixWorld);
+    list.push(rays[i]);
+  });
+  return list.length ? list : [headRay];
+}
+
+/** A pinch (or trigger) in VR: its own ray at that instant picks the button, the eye gaze when the Browser gives one. */
+function onXRSelect(e) {
+  const pose = e.frame?.getPose(e.inputSource.targetRaySpace, renderer.xr.getReferenceSpace());
+  if (!pose) return;
+  const { position: p, orientation: q } = pose.transform;
+  const origin = new THREE.Vector3(p.x, p.y, p.z);
+  const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w));
+  selector.select(origin, direction);
+}
 
 // ------------------------------------------------------------------ loop
 
@@ -444,12 +507,7 @@ renderer.setAnimationLoop(() => {
   updateShots(dt);
   world?.update(dt, time);
   for (let i = popups.length - 1; i >= 0; i--) if (!popups[i].update(dt, head)) popups.splice(i, 1);
-  // Gaze: the head in VR, the mouse on a flat screen.
-  if (renderer.xr.isPresenting) gaze.update(dt, head, headFwd);
-  else {
-    mouseRay.setFromCamera(mouse, camera);
-    gaze.update(dt, mouseRay.ray.origin, mouseRay.ray.direction);
-  }
+  selector.update(dt, hoverRays());
   fx.update(dt);
   renderer.render(scene, camera);
 });
@@ -483,6 +541,7 @@ vrButton.addEventListener('click', async () => {
   wake();
   const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'hand-tracking'] });
   await renderer.xr.setSession(session);
+  session.addEventListener('select', onXRSelect);
   overlay.hidden = true;
   session.addEventListener('end', () => { overlay.hidden = false; });
 });
