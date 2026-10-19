@@ -30,16 +30,9 @@
     button:hover { background: #4fb0ff; }
     button.secondary { background: #26384f; }
     button[hidden] { display: none; }
+    #version { color: #6f849a; font-size: 13px; margin-top: 10px; }
     #status { color: #9fb3c8; font-size: 14px; min-height: 20px; margin: 14px 0 0; }
   </style>
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-      }
-    }
-  </script>
 </head>
 <body>
   <div id="app"></div>
@@ -51,8 +44,29 @@
       <button id="enter-vr" hidden>Enter VR</button>
       <button id="play-flat" class="secondary" hidden>Play in browser</button>
       <div id="status">Loading…</div>
+      <div id="version"></div>
     </div>
   </div>
-  <script type="module" src="js/main.js"></script>
+  <script>
+    // Loads the newest release past any cache: version.json is never cached, and every module URL carries its version
+    // through an import map, so a new release fetches fresh code while an unchanged one stays cached.
+    (async () => {
+      let version = 'dev';
+      try { version = (await (await fetch('version.json', { cache: 'no-store' })).json()).version; } catch { /* offline */ }
+      window.GAME_VERSION = version;
+      document.getElementById('version').textContent = 'v' + version;
+      const base = new URL('js/', location.href).href;
+      const imports = {
+        three: 'https://unpkg.com/three@0.160.0/build/three.module.js',
+        'three/addons/': 'https://unpkg.com/three@0.160.0/examples/jsm/',
+      };
+      for (const f of ['main', 'world', 'fx', 'audio', 'ui']) imports[`${base}${f}.js`] = `${base}${f}.js?v=${version}`;
+      const map = document.createElement('script');
+      map.type = 'importmap';
+      map.textContent = JSON.stringify({ imports });
+      document.head.appendChild(map);
+      import(`${base}main.js`);
+    })();
+  </script>
 </body>
 </html>

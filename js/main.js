@@ -10,6 +10,7 @@ import { Panel, Button, Selector, Popup, text } from './ui.js';
 // A Reach (a forward jab, the game's CrawlDetector rule) throws a fireball along the hand's own velocity, as fast as the
 // hand moved; the head never aims. Menus use look and pinch. No locomotion.
 
+const VERSION = window.GAME_VERSION ?? 'dev';
 const ROUND = 60;
 const HURRY = 10;
 const SHOT_SCALE = 7;          // fireball speed = hand speed x this
@@ -153,7 +154,31 @@ function reach(s, velocity) {
   const path = s.fist.clone().sub(start.p);
   const direction = path.length() > 0.08 ? path.normalize() : velocity.clone().normalize();
   const speed = THREE.MathUtils.clamp(s.stroke.speed * SHOT_SCALE, SHOT_MIN, SHOT_MAX);
+  logReach(s, start, direction, velocity, speed);
   shoot(s.fist, direction.multiplyScalar(speed));
+}
+
+/** Records each Reach (window.reachLog, console) with its error against the target it came closest to, for tuning. */
+function logReach(s, start, direction, velocity, speed) {
+  let best = null;
+  for (const t of targets) {
+    if (t.dying) continue;
+    const to = t.group.position.clone().sub(s.fist);
+    const error = THREE.MathUtils.radToDeg(direction.angleTo(to));
+    if (!best || error < best.error) {
+      const right = new THREE.Vector3().crossVectors(to, new THREE.Vector3(0, 1, 0)).normalize();
+      const up = new THREE.Vector3().crossVectors(right, to).normalize();
+      best = { error, side: THREE.MathUtils.radToDeg(Math.asin(direction.dot(right))), up: THREE.MathUtils.radToDeg(Math.asin(direction.dot(up))), allowed: THREE.MathUtils.radToDeg(Math.atan(t.radius / to.length())) };
+    }
+  }
+  const round = v => Math.round(v * 100) / 100;
+  const entry = {
+    hand: s.source?.handedness, input: s.source?.hand ? 'hand' : 'controller', speed: round(speed), samples: s.history.length,
+    path: round(s.fist.distanceTo(start.p)), velocityVsPath: round(THREE.MathUtils.radToDeg(velocity.angleTo(direction))),
+    target: best && { error: round(best.error), right: round(best.side), up: round(best.up), allowed: round(best.allowed) },
+  };
+  (window.reachLog ??= []).push(entry);
+  console.info('[reach]', JSON.stringify(entry));
 }
 
 // ------------------------------------------------------------------ projectiles
@@ -392,6 +417,7 @@ const menu = new Panel(1.6, 1.1, (ctx, w) => {
   text(ctx, 'Fireball Range', w / 2, 140, 82);
   text(ctx, 'Punch to throw fire. Hit the bullseye.', w / 2, 225, 34, { font: 'Nunito', weight: 700, color: '#d9e6f2' });
   text(ctx, game.best ? `Best: ${game.best}` : '60 seconds', w / 2, 278, 30, { font: 'Nunito', weight: 700, color: '#9fb3c8' });
+  text(ctx, `v${VERSION}`, w - 40, 410, 24, { font: 'Nunito', weight: 700, color: '#6f849a', align: 'right' });
 });
 menu.addButton(new Button('Start', 0.62, 0.2, startCountdown), 0, -0.3);
 placePanel(menu, 1.45, -2.2);
