@@ -109,7 +109,7 @@ function updateHands(dt, now) {
     const prev = s.history[s.history.length - 1];
     if (!prev || prev.p.distanceToSquared(s.fist) > 1e-8) s.history.push({ t: now, p: s.fist.clone(), ahead });
     while (s.history.length > 2 && now - s.history[0].t > STROKE_WINDOW) s.history.shift();
-    if (game.state === 'play') fx.handFlame(s.fist, dt);
+    fx.handFlame(s.fist, dt);
     const velocity = velocityOf(s, now);
     if (!velocity) continue;
     const forward = velocity.dot(flat);
@@ -148,7 +148,6 @@ function velocityOf(s, now) {
  */
 function reach(s, velocity) {
   music.reach();
-  if (game.state !== 'play') return;
   let start = s.history[0];
   for (const h of s.history) if (h.ahead < start.ahead) start = h;
   const path = s.fist.clone().sub(start.p);
@@ -176,9 +175,16 @@ function logReach(s, start, direction, velocity, speed) {
     hand: s.source?.handedness, input: s.source?.hand ? 'hand' : 'controller', speed: round(speed), samples: s.history.length,
     path: round(s.fist.distanceTo(start.p)), velocityVsPath: round(THREE.MathUtils.radToDeg(velocity.angleTo(direction))),
     target: best && { error: round(best.error), right: round(best.side), up: round(best.up), allowed: round(best.allowed) },
+    raw: {
+      t: s.history.map(h => Math.round(h.t * 1000)),
+      p: s.history.map(h => [h.p.x, h.p.y, h.p.z].map(v => Math.round(v * 1000))),
+      head: [head.x, head.y, head.z].map(v => Math.round(v * 1000)),
+      fwd: [headFwd.x, headFwd.y, headFwd.z].map(v => Math.round(v * 1000) / 1000),
+      targets: targets.filter(t => !t.dying).map(t => [t.group.position.x, t.group.position.y, t.group.position.z, t.radius].map(v => Math.round(v * 1000) / 1000)),
+    },
   };
   (window.reachLog ??= []).push(entry);
-  console.info('[reach]', JSON.stringify(entry));
+  console.info('[reach]', JSON.stringify({ ...entry, raw: undefined }));
 }
 
 // ------------------------------------------------------------------ projectiles
@@ -187,7 +193,7 @@ const shots = [];
 
 function shoot(from, velocity) {
   shots.push({ pos: from.clone(), vel: velocity.clone(), age: 0, hit: false });
-  game.shots++;
+  if (game.state === 'play') game.shots++;
   sound.play('shoot', { position: from, volume: 0.75 });
 }
 
@@ -200,6 +206,13 @@ function updateShots(dt) {
     fx.core(s.pos);
     fx.trail(s.pos, s.vel.length() * dt);
     const target = hitTarget(before, s.pos);
+    if (!target && selector.strike(before, s.pos)) {
+      // A fireball into a menu button presses it.
+      fx.burst(s.pos, 0.8);
+      sound.play('boom2', { position: s.pos, volume: 0.6 });
+      shots.splice(i, 1);
+      continue;
+    }
     if (target) {
       shots.splice(i, 1);
       continue;
@@ -478,7 +491,7 @@ canvas.addEventListener('pointerup', () => {
   const from = camera.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0.25, -0.35, 0).applyQuaternion(camera.quaternion));
   const aim = mouseRay.ray.at(12, new THREE.Vector3());
   music.reach();
-  if (game.state === 'play') shoot(from, aim.sub(from).normalize().multiplyScalar(18));
+  shoot(from, aim.sub(from).normalize().multiplyScalar(18));
 });
 
 // ------------------------------------------------------------------ menu selection

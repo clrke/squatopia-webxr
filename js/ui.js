@@ -177,17 +177,35 @@ export class Selector {
     }
   }
 
-  /** A pinch, trigger or click along this ray: selects the button it lands on. True when it did. */
-  select(origin, direction) {
-    if (this.cooldown > 0) return false;
-    const hit = this.cast(origin, direction);
+  /** A fireball flying from a to b this frame: presses the first button it passes through. True when it did. */
+  strike(a, b) {
+    if (this.cooldown > 0 || !this.open) return false;
+    const segment = b.clone().sub(a);
+    const length = segment.length();
+    if (length < 1e-6) return false;
+    this.ray.set(a, segment.divideScalar(length));
+    this.ray.far = length;
+    const hit = this.ray.intersectObjects(this.buttons(), false)[0];
+    this.ray.far = Infinity;
     if (!hit) return false;
-    const button = hit.object.userData.button;
+    this.press(hit.object.userData.button);
+    return true;
+  }
+
+  press(button) {
     this.hovered?.setHover(false);
     this.hovered = null;
     this.cooldown = 0.4;
     this.sound.play('select', { volume: 0.8 });
     button.onClick();
+  }
+
+  /** A pinch, trigger or click along this ray: selects the button it lands on. True when it did. */
+  select(origin, direction) {
+    if (this.cooldown > 0) return false;
+    const hit = this.cast(origin, direction);
+    if (!hit) return false;
+    this.press(hit.object.userData.button);
     return true;
   }
 }
